@@ -1,0 +1,966 @@
+---
+title: "Data Science Project 2 Airline Data"
+author: "Laura Escher + Data Science Teammates"
+date: "2025-12-04"
+output:
+  html_document:
+    code_folding: hide
+    number_sections: false
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+# Some of common RMD options (and the defaults) are: 
+# include=T, eval=T, echo=T, results='hide'/'asis'/'markup',..., collapse=F, warning=T, message=T, error=T, cache=T, fig.width=6, fig.height=4, fig.dim=c(6,4) #inches, fig.align='left'/'center','right', 
+knitr::opts_chunk$set(results="markup", warning = F, message = F)
+options(scientific=T, digits = 3) 
+```
+
+# Link to GitHub Repository and loading in packages
+Here is a link to our repository: https://github.com/splus8191/DATS6101Group2
+
+```{r setup and loading packages}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ezids)
+library(car)
+library(modelsummary)
+library(stats)
+library(knitr)
+library(randomForest)
+library(tree)
+library(caret)
+library(PRROC)
+library(pROC)
+library(readr)
+library(purrr)
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+
+options(scientific=T, digits = 3)
+```
+
+# Loading in the Dataset [Laura]
+
+```{r}
+airdata <- read.csv("sample airline data.csv file path") #referenced in the data files for this project
+str(airdata)
+colSums(is.na(airdata))
+sum(is.na(airdata))
+```
+
+We first opened up the file and examined the data using the str() function. We checked to see if there are any missing values in the data, which there are 2,425,691 across different columns and rows. There are 539,747 observations in this data set, and 47 variables. This data is flight specific during the month of January 2025. We will include 27 variables from the original data set in our analysis:
+
+Variable  |  Definition
+
+- YEAR | Year
+- MONTH | Month (MM)
+- DAY_OF_MONTH | Day of the month
+- DAY_OF_WEEK | Day of the week
+- OP_UNIQUE_CARRIER | Unique Carrier Code. When the same code has been used by multiple carriers, a numeric suffix is used for earlier users, for example, PA, PA(1), PA(2). Use this field for analysis across a range of years.
+- ORIGIN | Origin airport
+- ORIGIN_CITY_NAME | Origin Airport, City Name
+- DEST | Destination Airport
+- DEST_CITY_NAME | Destination Airport, City Name
+- CRS_DEP_TIME | CRS Departure Time (local time: hhmm)
+- DEP_TIME | Actual Departure Time (local time: hhmm)
+- DEP_DELAY | Difference in minutes between scheduled and actual departure time. Early departures show negative numbers.
+- DEP_DELAY_NEW | Difference in minutes between scheduled and actual departure time. Early departures set to 0.
+- DEP_DEL15 | Departure Delay Indicator, 15 Minutes or More (1=Yes, 0=No)
+- CRS_ARR_TIME | CRS Arrival Time (local time: hhmm)
+- ARR_TIME | Actual Arrival Time (local time: hhmm)
+- ARR_DELAY |	Difference in minutes between scheduled and actual arrival time. Early arrivals show negative numbers.
+- ARR_DELAY_NEW | Difference in minutes between scheduled and actual arrival time. Early arrivals set to 0.
+- ARR_DEL15 | Arrival Delay Indicator, 15 Minutes or More (1=Yes, 0=No)
+- AIR_TIME | Flight Time, in Minutes
+- DISTANCE | Distance between airports (miles)
+- DISTANCE_GROUP | 
+- CARRIER_DELAY | Carrier Delay, in Minutes
+- WEATHER_DELAY | Weather Delay, in Minutes	
+- NAS_DELAY | National Air System Delay, in Minutes	
+- SECURITY_DELAY | Security Delay, in Minutes
+- LATE_AIRCRAFT_DELAY | Late Aircraft Delay, in Minutes
+
+# SMART Questions
+
+Our SMART Questions for this analysis are:
+- Do certain regions have more delays?
+- Is there a relationship between airline brand and delay frequency/type of delay?
+
+# EDA [Laura]
+
+Before filtering the data, how many airlines are there in the data set?
+```{r}
+airlinecode <- c('DL', 'WN', 'B6', 'UA', 'AA', 'G4', 'F9', 'HA', 'AS', 'MQ', 'NK', 'PS', 'OO', 'YX', 'NA')
+
+airlinecode1 <- data.frame(
+  OP_UNIQUE_CARRIER = c('DL', 'WN', 'B6', 'UA', 'AA', 'G4', 'F9', 'HA', 'AS', 'MQ', 'NK', 'PS', 'OO', 'YX', 'NA'),
+  airline = c('Delta', 'Southwest', 'JetBlue', 'United', 'American', 'Allegiant',
+              'Frontier', 'Hawaiian', 'Alaska', 'EnvoyAir', 'Spirit', 'PSA', 'SkyWest', 'Republic', 'NorthAmerican')
+)
+
+airdata1 <- airdata %>%
+  left_join(airlinecode1, by = "OP_UNIQUE_CARRIER")
+
+# airdata %>%
+#   count(OP_UNIQUE_CARRIER)
+
+ggplot(data = airdata1, aes(x = airline)) +
+  geom_bar(fill = 'blue') +
+  labs(title = "Number of Airlines",
+       x = "Airlines",
+       y = "Number of Flights by Airline") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 0.5))
+```
+
+There are 14 airlines total that flew in January 2025.
+
+Now, before analyzing the data further, we will match airline codes to airlines. Then, we will filter by the 9 major airlines in the U.S.: Delta, Southwest, JetBlue, United, American, Allegiant, Frontier, Hawaiian, and Alaska. We also make a new variable called "delay_minutes" to sum departure and arrival delays into one column for later analysis. With delay_minutes and airline added, there are now 29 variables.
+
+```{r}
+major <- c('DL', 'WN', 'B6', 'UA', 'AA', 'G4', 'F9', 'HA', 'AS')
+
+airlinename <- data.frame(
+  OP_UNIQUE_CARRIER = c('DL', 'WN', 'B6', 'UA', 'AA', 'G4', 'F9', 'HA', 'AS'),
+  airline = c('Delta', 'Southwest', 'JetBlue', 'United', 'American', 'Allegiant',
+              'Frontier', 'Hawaiian', 'Alaska')
+)
+
+majorairline <- airdata %>%
+  filter(OP_UNIQUE_CARRIER %in% major) %>%
+  left_join(airlinename, by = "OP_UNIQUE_CARRIER") %>%
+  select(YEAR, MONTH, DAY_OF_MONTH, DAY_OF_WEEK, OP_UNIQUE_CARRIER, airline, ORIGIN, ORIGIN_CITY_NAME, DEST, DEST_CITY_NAME, CRS_DEP_TIME, DEP_TIME, DEP_DELAY, DEP_DELAY_NEW, DEP_DEL15, DISTANCE, CRS_ARR_TIME, ARR_TIME, ARR_DELAY, ARR_DELAY_NEW, ARR_DEL15, AIR_TIME, DISTANCE_GROUP, CARRIER_DELAY, WEATHER_DELAY, NAS_DELAY, SECURITY_DELAY, LATE_AIRCRAFT_DELAY) %>%
+  mutate(delay_minutes = (DEP_DELAY_NEW + ARR_DELAY_NEW))
+
+sum(is.na(majorairline))
+colSums(is.na(majorairline))
+```
+
+Before moving forward, once again, the five types of delays all have the same number of NAs at 317,538 each. Are there any such cases where there are zeros across the five types at the same time? Maybe the Bureau of Transportation Statistics should have put zeros where they were needed. If there are structural zeros in the data set, it means that the Bureau of Transportation Statistics left out zeros in a systemic way that affects the entire data set.
+
+```{r}
+fivedelays_zero <- majorairline %>%
+   filter(WEATHER_DELAY == 0,
+          NAS_DELAY == 0,
+          LATE_AIRCRAFT_DELAY == 0,
+          CARRIER_DELAY == 0,
+          SECURITY_DELAY == 0
+          )
+nrow(fivedelays_zero)
+```
+There are zero observations from the filtering the data set for cases where there are zeros across the five delay types. This confirms our suspicion of structural zeros in our data set and we can insert zeros where there should be if there were observations with zero delays.
+
+Now, let's clean out the rest of the 1,694,386 NAs from the analysis. We will do this by routing the structural zeros to the NAs in the five types of delays when delay_minutes equals zero across those columns. This leaves us with zero NAs in our data set with 277,538 observations total. Additionally, we created indicator variables for the types of delays. We are left with 35 variables.
+
+```{r}
+majorairline <- majorairline %>%
+  mutate(is_delayed = ifelse(majorairline$delay_minutes == 0, 0, 1))
+
+delay_cols <- c("CARRIER_DELAY", "NAS_DELAY", "SECURITY_DELAY",
+                "LATE_AIRCRAFT_DELAY", "WEATHER_DELAY")
+
+majorairline[delay_cols] <- lapply(delay_cols, function(col) {
+  ifelse(majorairline$delay_minutes == 0 & is.na(majorairline[[col]]),
+         0,
+         majorairline[[col]])
+})
+
+majorairline <- majorairline %>%
+  mutate(carrier_delay_ind = if_else(CARRIER_DELAY > 0, 1, 0),
+         weather_delay_ind = if_else(WEATHER_DELAY > 0, 1, 0),
+         nas_delay_ind = if_else(NAS_DELAY > 0, 1, 0),
+         security_delay_ind = if_else(SECURITY_DELAY > 0, 1, 0),
+         lateaircraft_delay_ind = if_else(LATE_AIRCRAFT_DELAY > 0, 1, 0)) %>%
+  drop_na()
+
+sum(is.na(majorairline))
+```
+## Number of Flights Per Airline
+
+```{r}
+flights_per_airline <- majorairline %>%
+  group_by(airline) %>%
+  summarise(n_flights = n()) %>%
+  arrange(desc(n_flights))
+
+kable(flights_per_airline)
+
+ggplot(data = majorairline, aes(x = airline)) +
+  geom_bar(fill = 'blue') +
+  labs(title = "Number of Flights Per Airline",
+       x = "Airlines",
+       y = "Number of Flights by Airline") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 0.5))
+```
+
+Southwest has the most amount of flights in the filtered data set, followed by Delta, American, and United.
+
+## Delay rate by airline
+
+Perhaps some airlines are delayed more than others. We compare airlines and their probability of being delayed below.
+
+```{r}
+delay_summary <- majorairline %>%
+  group_by(airline) %>%
+  summarise(p_delay = mean(is_delayed), n = n())
+print(delay_summary)
+
+ggplot(data = delay_summary, aes(x = airline, y = p_delay)) +
+  geom_bar(stat = "identity", fill = 'darkseagreen') +
+  labs(title = "Proportion of Delayed Flights by Airline",
+       x = "Airline",
+       y = "Proportion of Delays") +
+  theme_minimal()
+```
+The highest delay rates are Frontier at 32.5% and JetBlue at 32.4%.
+
+The lowest delay rates are Southwest at 21.3% and Hawaiian at 20.3%.
+
+As noted in the bar chart above, the sample sizes (n) are largest for American, Delta, Southwest, and United.
+
+All airlines in the sample have delay rates above 20% (irrespective of departure or arrival delay), which is comparable to typical industry averages, where usually 15-30% of flights experience significant delays.
+
+There are a significant number of outliers in the data set, so we can create a box plot to illustrate if there is a difference between the airlines and their delay minutes. We also create a chart to show which airlines had the longest delays in January 2025.
+
+```{r}
+ggplot(
+  data = majorairline %>% filter(delay_minutes > 0, delay_minutes <= 150),
+  aes(x = airline, y = delay_minutes)
+) +
+  geom_boxplot() +
+  labs(
+    title = "Delay Minutes by Airline (Under 150 Minutes or 2.5 hour delay)",
+    x = "Airline",
+    y = "Delay Minutes"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+maxdelay <- majorairline %>%
+  group_by(airline) %>%
+  summarise(
+    max_delayminutes = max(delay_minutes)
+  )
+print(maxdelay)
+
+```
+
+The box plot above shows that there are no statistically significant differences among the airlines in their total delay minutes, regardless of whether the delay was departure or arrival related. Additionally, American airlines had the longest maximum delay at 6580 minutes. The next longest delay was Allegiant at 2903 minutes in delays. The lowest delay in minutes for a single flight was from Southwest airlines at 1463 minutes.
+
+## Delay Type Rates by Airline
+
+```{r}
+avg_delay_type <- majorairline %>%
+  group_by(airline) %>%
+  summarize(
+    Weather = mean(weather_delay_ind),
+    NAS = mean(nas_delay_ind),
+    Carrier = mean(carrier_delay_ind),
+    Security = mean(security_delay_ind),
+    `Late Aircraft` = mean(lateaircraft_delay_ind),
+    n_flights = n()
+  ) %>%
+    pivot_longer(
+    cols = c(Weather, NAS, Carrier, Security, `Late Aircraft`),
+    names_to = "delay_type",
+    values_to = "rate"
+  )
+
+ggplot(avg_delay_type, aes(x = airline, y = rate, fill = delay_type)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_brewer(palette = "Set2", name = "Delay Type") +
+  labs(title = "Delay Type Rates by Airline",
+       x = "Airline",
+       y = "Rate of Occurrence") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+JetBlue has the highest NAS and Carrier delays. Frontier has the highest late aircraft delay. Security delays were very low percentages across all the airlines, but the highest security delay rate appears to be found with Alaska airlines. Lastly, weather delays were highest with Hawaiian airlines. Overall, we were surprised that there were not higher weather delays in the data set given that it was wintertime in the U.S. and it snows at many U.S. airports during the winter season.
+
+Let's look at the types of delays by airline and see if they differed across airlines. In general, we found that the airlines experienced delays less than 50 minutes in the following graphs.
+
+Here are the weather delays by airline. It appears that weather delays do not differ significantly from one airline to another.
+```{r}
+weather_only <- majorairline %>% filter(WEATHER_DELAY > 0)
+
+ggplot(weather_only, aes(x = airline, y = WEATHER_DELAY, fill = airline)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(title = "Weather Delay Duration by Airline",
+       subtitle = "Flights with actual weather delays only",
+       x = "Airline",
+       y = "Weather Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Here are NAS delays by airline. It appears that NAS delays do not differ significantly from one airline to another.
+```{r}
+nas_only <- majorairline %>% filter(NAS_DELAY > 0)
+
+ggplot(nas_only, aes(x = airline, y = NAS_DELAY, fill = airline)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(title = "NAS Delay Duration by Airline",
+       subtitle = "Flights with actual NAS delays only",
+       x = "Airline",
+       y = "NAS Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Here are the security delays per airline. It appears that security delays do differ significantly from one airline to another.
+```{r}
+security_only <- majorairline %>% filter(SECURITY_DELAY > 0)
+
+ggplot(security_only, aes(x = airline, y = SECURITY_DELAY, fill = airline)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(title = "Security Delay Duration by Airline",
+       subtitle = "Flights with actual security delays only",
+       x = "Airline",
+       y = "Security Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Here are the carrier delays per airline. It appears that carrier delays do not differ significantly from one airline to another.
+```{r}
+carrier_only <- majorairline %>% filter(CARRIER_DELAY > 0)
+
+ggplot(carrier_only, aes(x = airline, y = CARRIER_DELAY, fill = airline)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(title = "Carrier Delay Duration by Airline",
+       subtitle = "Flights with actual carrier delays only",
+       x = "Airline",
+       y = "Carrier Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Here are the late aircraft delays per airline. It appears that late aircraft delays do not differ significantly from one airline to another.
+```{r}
+lateaircraft_only <- majorairline %>% filter(LATE_AIRCRAFT_DELAY > 0)
+
+ggplot(lateaircraft_only, aes(x = airline, y = LATE_AIRCRAFT_DELAY, fill = airline)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(title = "Late Aircraft Delay Duration by Airline",
+       subtitle = "Flights with actual late aircraft delays only",
+       x = "Airline",
+       y = "Aircraft Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## EDA for Origin Airport and Destination Airport Delay Probabilities
+
+For the last portion of EDA, we thought it would be a good idea to showcase the delays by origin and destination airport using airports with greater than or equal to 100 flights.
+
+```{r}
+originairport_summary <- majorairline %>%
+  group_by(ORIGIN_CITY_NAME) %>%
+  summarize(
+    delay_rate = mean(is_delayed),
+    n_flights = n()
+  ) %>%
+  filter(n_flights >= 100)
+
+worst_25 <- originairport_summary %>%
+  arrange(desc(delay_rate)) %>%
+  head(25)
+
+ggplot(worst_25, aes(x = reorder(ORIGIN_CITY_NAME, delay_rate), y = delay_rate)) +
+  geom_col(fill = "coral", alpha = 0.8) +
+  geom_text(aes(label = paste0(round(delay_rate * 100, 1), "%")), 
+            hjust = -0.1, size = 3) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent, 
+                     limits = c(0, max(worst_25$delay_rate) * 1.1)) +
+  labs(title = "Top 25 Origin Airports with Highest Delay Rates",
+       subtitle = "Airports with 100+ flights only",
+       x = "Origin Airport", 
+       y = "Proportion of Delayed Flights") +
+  theme_minimal()
+```
+For Origin airports, Eagle, Colorado has the highest proportion of delayed flights at 47.5%.
+
+```{r}
+destairport_summary <- majorairline %>%
+  group_by(DEST_CITY_NAME) %>%
+  summarize(
+    delay_rate = mean(is_delayed),
+    n_flights = n()
+  ) %>%
+  filter(n_flights >= 100)
+
+destworst_25 <- destairport_summary %>%
+  arrange(desc(delay_rate)) %>%
+  head(25)
+
+ggplot(destworst_25, aes(x = reorder(DEST_CITY_NAME, delay_rate), y = delay_rate)) +
+  geom_col(fill = "cadetblue3", alpha = 0.8) +
+  geom_text(aes(label = paste0(round(delay_rate * 100, 1), "%")), 
+            hjust = -0.1, size = 3) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent, 
+                     limits = c(0, max(destworst_25$delay_rate) * 1.1)) +
+  labs(title = "Top 25 Destination Airports with Highest Delay Rates",
+       subtitle = "Airports with 100+ flights only",
+       x = "Destination Airport", 
+       y = "Proportion of Delayed Flights") +
+  theme_minimal()
+```
+
+For Destination airports, Provo, Utah has the highest proportion of delayed flights at 47.7%.
+
+## Convert categorical variables to factors
+
+Before finishing up EDA, we decided to convert certain variables to factor variables.
+
+```{r}
+majorairline$airline <- as.factor(majorairline$airline)
+majorairline$OP_UNIQUE_CARRIER <- as.factor(majorairline$OP_UNIQUE_CARRIER)
+majorairline$OP_CARRIER <- as.factor(majorairline$OP_UNIQUE_CARRIER)
+majorairline$DEP_DEL15 <- as.factor(majorairline$DEP_DEL15)
+majorairline$MONTH <- as.factor(majorairline$MONTH)
+majorairline$DAY_OF_WEEK <- as.factor(majorairline$DAY_OF_WEEK)
+majorairline$DEST <- as.factor(majorairline$DEST)
+majorairline$ORIGIN <- as.factor(majorairline$ORIGIN)
+```
+
+# Statistical Tests [Teammate explanation] & [Laura code]
+
+## Chi-square test: Airline vs Delay Type
+
+```{r}
+tab <- table(majorairline$airline, majorairline$is_delayed)
+chisq.test(tab)
+```
+
+There is a significant relationship between airline and delay frequency.
+Some airlines have a much higher proportion of delayed flights than others.
+
+## Chi-square Tests: Airline vs Type of Delay
+```{r}
+chisq.test(majorairline$airline, majorairline$carrier_delay_ind)
+chisq.test(majorairline$airline, majorairline$weather_delay_ind)
+chisq.test(majorairline$airline, majorairline$nas_delay_ind)
+chisq.test(majorairline$airline, majorairline$security_delay_ind)
+chisq.test(majorairline$airline, majorairline$lateaircraft_delay_ind)
+```
+
+There is a significant relationship between airline and each type of delay.
+Different airlines experience weather, carrier, NAS, security, and late-aircraft delays at different rates, meaning some airlines are more prone to certain delay types than others.
+
+Based on Chi-Square tests (p < 2e-16 for all comparisons), there is a strong and statistically significant relationship between airline brand and both delay frequency and delay type. This indicates that delays are not evenly distributed across airlines; instead, some airlines are more prone to specific kinds of delays than others.
+
+## ANOVA tests delay in minutes (quantitative dependent) VS airline (factor variable)
+
+```{r}
+anova1 <- aov(delay_minutes ~ airline, data = majorairline)
+summary(anova1)
+TukeyHSD(anova1)
+```
+
+There are significant differences in the average delay minutes across airlines (p < 2e−16).
+Some airlines have much longer delays than others.
+
+# Decision Tree [Teammate]
+
+We read the data in.
+```{r}
+flightdata = read.csv("LAirlinedata.csv file path")
+```
+
+It is important to look at numerical value correlations with the target.This wont capture factor variable correlation but will show us the continuous numerical value correlation. This will give us a picture of what our decision tree will use.
+
+```{r}
+num_cols <- names(flightdata)[sapply(flightdata, is.numeric)]
+cors <- cor(flightdata[num_cols], use = "pairwise.complete.obs")
+isDelayed_corrs <- cors[,"isDelayed"]
+```
+
+convert the target to a factor variable and create the hour variable to help with training.
+
+```{r}
+flightdata$isDelayed <- factor(flightdata$isDelayed, levels = c(0,1))
+flightdata <- subset(flightdata, select = -DEST_STATE_ABR)
+```
+
+
+```{r}
+flightdata <- flightdata %>%
+  mutate(region = case_when(
+    ORIGIN_STATE_ABR %in% c("CT","DC","DE","MA","MD","ME","NH","NJ","NY","PA","RI","VT") ~ "Northeast",
+    
+    ORIGIN_STATE_ABR %in% c("IA","IL","IN","MI","MN","MO","ND","NE","OH","SD","WI") ~ "Midwest",
+    
+    ORIGIN_STATE_ABR %in% c("AL","FL","GA","KY","MS","NC","SC","TN","VA","WV") ~ "Southeast",
+    
+    ORIGIN_STATE_ABR %in% c("AR","KS","LA","NM","OK","TX") ~ "South_Central",
+    
+    ORIGIN_STATE_ABR %in% c("AZ","CA","CO","ID","MT","NV","OR","UT","WA","WY") ~ "West",
+    
+    ORIGIN_STATE_ABR %in% c("AK","HI","PR","VI","GU","AS","MP","TT") ~ "Alaska_Hawaii_Territories",
+    
+    TRUE ~ "Other"
+  )) %>%
+  mutate(region = factor(region))
+```
+
+```{r}
+flightdata$region <- factor(flightdata$region)
+delaytime = flightdata %>%
+  group_by(region) %>%
+  summarise(mean_delay = mean(ARR_DELAY + DEP_DELAY, na.rm = TRUE))
+```
+  
+```{r}  
+flightdata$isDelayed <- factor(flightdata$isDelayed, levels = c(0,1))
+flightdata$isDelayed <- factor(flightdata$isDelayed, levels = c(0,1))
+flightdata$ORIGIN <- factor(flightdata$ORIGIN)
+flightdata$DEST <- factor(flightdata$DEST)
+flightdata$ORIGIN_STATE_ABR <- factor(flightdata$ORIGIN_STATE_ABR)
+flightdata$region <- factor(flightdata$region)
+flightdata$OP_CARRIER_AIRLINE_ID <- factor(flightdata$OP_CARRIER_AIRLINE_ID)
+flightdata$CARRIER  <- as.factor(flightdata$OP_UNIQUE_CARRIER)
+flightdata$DEP_HOUR <- as.factor(floor(flightdata$CRS_DEP_TIME / 100))
+```
+
+This is how we train the singular decision tree. This sadly was not able to capture the factor variables due to the how many levels were in them. Our factor variables such as states had more than the max of 32.ORIGIN_AIRPORT_ID was left in there to display how a non factorized factor variable will just get unused in training. This has moderate accuracy.    
+
+```{r}
+tree_model <- tree(
+  isDelayed ~ ORIGIN_AIRPORT_ID + DAY_OF_MONTH + DISTANCE + AIR_TIME + DEP_HOUR,
+  data = flightdata,
+  mindev = 0.001, mincut = 1, minsize = 4
+)
+
+summary(tree_model)
+```
+
+All months are in January, this decreases model accuracy. 
+```{r}
+length(unique(flightdata$MONTH))
+```
+
+
+```{r}
+flightdata$isDelayed <- factor(flightdata$isDelayed, levels = c(0,1))
+
+rf_model <- randomForest(isDelayed ~ ORIGIN_AIRPORT_ID + DAY_OF_MONTH + OP_UNIQUE_CARRIER + DISTANCE + AIR_TIME + region + ORIGIN_STATE_ABR + flightdata$DEP_HOUR,
+                         data = flightdata,
+                         ntree = 500,       
+                         mtry = 2,          
+                         importance = TRUE)
+
+print(rf_model)
+```
+
+This is the plot of the different regions average DEP_DELAY. This will show patterns in the data for which regions have the worst delays. Arrival delays are less important because they can be a result of the departure delay. We can see in this graph which regions are most on time. This is important when consulting the infrastructure. When it does come to arrival delays though, much time is made up when en route to west coast states.
+
+```{r}
+ggplot(flightdata %>% 
+         group_by(region) %>% 
+         summarise(mean_delay = mean(DEP_DELAY, na.rm = TRUE)),
+       aes(x = region, y = mean_delay, color = region)) +
+  geom_point(size = 4) +
+  scale_color_viridis_d() +
+  labs(title = "Mean Departure Delay by Region",
+       y = "Mean Delay (minutes)", x = "Region")
+
+ggplot(flightdata %>% group_by(region) %>% summarise(mean_delay = mean(DEP_DELAY, na.rm = TRUE)),
+       aes(region, mean_delay, fill = region)) + geom_col() + scale_fill_viridis_d()
+
+ggplot(flightdata %>% 
+         group_by(region) %>% 
+         summarise(mean_delay = mean(ARR_DELAY, na.rm = TRUE)),
+       aes(x = region, y = mean_delay, color = region)) +
+  geom_point(size = 4) +
+  scale_color_viridis_d() +
+  labs(title = "Mean Departure Arrival by Region",
+       y = "Mean Delay (minutes)", x = "Region")
+```
+
+To see that there is an actual statistical significance within the data we need to run a chi squared test. Based off the data we can see the results show that there is a difference and the region does make a difference.
+
+```{r}
+cont_table <- table(flightdata$isDelayed, flightdata$region)
+
+print(cont_table)
+
+addmargins(cont_table)
+
+chi_result <- chisq.test(cont_table)
+
+chi_result
+```
+
+# Logistic Regression and Next Month Delay Prediction [Teammate]
+
+The code reads and merges CSV files for January to July, selects relevant columns, preprocesses data, and trains a logistic regression model to predict the probability of a delay (ARR_DEL15 = 1). 
+Filter the data set to include only major U.S. airlines (AA, DL, UA, WN, AS, B6, HA, F9, NK) and restrict the data set to the top 10 airports reducing dimensionality.
+
+```{r}
+# Read monthly files
+csv_files <- list.files(
+  path = "teammate months file path",
+  pattern = "*.csv", full.names = TRUE
+)
+
+flights_list <- csv_files %>%
+  map(~ read_csv(.x, show_col_types = FALSE) %>%
+        mutate(
+          CRS_DEP_TIME = as.character(CRS_DEP_TIME),
+          CRS_ARR_TIME = as.character(CRS_ARR_TIME)
+        ))
+
+flights_all <- bind_rows(flights_list)
+
+# Keep only major US airlines
+major_airlines <- c("AA","DL","UA","WN","AS","B6","HA","F9","NK")
+
+flights_all <- flights_all %>%
+  filter(OP_UNIQUE_CARRIER %in% major_airlines)
+
+# Keep top 50 airports by origin frequency (both origin & dest)
+top_airports <- flights_all %>%
+  count(ORIGIN, sort = TRUE) %>%
+  slice_head(n = 10) %>%
+  pull(ORIGIN)
+
+flights_all <- flights_all %>%
+  filter(ORIGIN %in% top_airports,
+         DEST   %in% top_airports)
+```
+
+Here, is removed the missing values in the variables that will be used as predictors in the model (ARR_DEL15, carrier, airports, day of week, schedule times, departure delay flag, distance, and month),
+then drop the columns that store delay minutes (containing NA mostly) by cancellation information, since they are not useful for initial prediction.
+Is assigned key categorical variables (carrier, origin, destination, departure time block, arrival time block) as factors so that the logistic regression treats them as categorical predictors
+rather than numeric values.
+
+```{r}
+# Drop NAs only in variables used for prediction
+flights_all <- flights_all %>%
+  drop_na(ARR_DEL15, OP_UNIQUE_CARRIER, ORIGIN, DEST,
+          DAY_OF_WEEK, CRS_DEP_TIME, CRS_ARR_TIME,
+          DEP_DEL15, DISTANCE, MONTH)
+
+# Remove cause‑minute columns (used only for post analysis)
+flights_all <- flights_all %>%
+  select(-CANCELLATION_CODE, -CARRIER_DELAY, -WEATHER_DELAY, -NAS_DELAY,
+         -SECURITY_DELAY, -LATE_AIRCRAFT_DELAY)
+
+# Convert categorical predictors to factors
+flights_all <- flights_all %>%
+  mutate(
+    OP_UNIQUE_CARRIER = as.factor(OP_UNIQUE_CARRIER),
+    ORIGIN            = as.factor(ORIGIN),
+    DEST              = as.factor(DEST),
+    DEP_TIME_BLK      = as.factor(DEP_TIME_BLK),
+    ARR_TIME_BLK      = as.factor(ARR_TIME_BLK)
+  )
+```
+
+Split the cleaned data set into a training set (January–June flights) 
+Restrict the training table to ARR_DEL15 and a focused set of predictors describing carrier, route, calendar effects, schedule times, and basic operational variables such as taxi times and diversion flag.
+
+Fit a logistic regression model that predicts the probability of an arrival delay ≥15 minutes from carrier, origin, destination, day of week, distance, month, and departure/arrival time blocks, treating the binary outcome as a binomial response.
+```{r}
+# Train on months < 7, test on month == 7
+train_data <- flights_all %>% filter(MONTH < 7)
+test_data  <- flights_all %>% filter(MONTH == 7)
+
+# Keep only needed columns in training set
+train_data <- train_data %>%
+  select(ARR_DEL15, OP_UNIQUE_CARRIER, ORIGIN, DEST,
+         DAY_OF_WEEK, CRS_DEP_TIME, CRS_ARR_TIME,
+         DEP_DEL15, DISTANCE, MONTH, YEAR,
+         DEP_TIME_BLK, ARR_TIME_BLK, TAXI_OUT, TAXI_IN, DIVERTED)
+names(train_data)
+
+model <- glm(
+  ARR_DEL15 ~ OP_UNIQUE_CARRIER + ORIGIN + DEST +
+    DAY_OF_WEEK + DISTANCE + MONTH +
+    DEP_TIME_BLK + ARR_TIME_BLK,
+  data = train_data,
+  family = binomial
+)
+summary(model)
+```
+
+Interpretation: 
+
+Carriers (vs. baseline carrier):
+
+Alaska Airlines and Frontier have significantly higher log-odds of delay (positive coefficients), meaning higher delay risk than the baseline carrier.
+
+DL: Delta Air Lines
+NK: Spirit Airlines
+UA: United Airlines
+have significantly lower log-odds of delay (negative coefficients), meaning they are less delay on these routes. southest airlines(WN) is similar to the baseline (coefficient small and not significant).
+
+Airports:
+
+Several origin airports (CLT, LAS, LAX, MCO, ORD, PHX, SEA) have negative, highly significant coefficients, indicating lower delay odds than the reference origin, while DEN and DFW are roughly similar to the reference.
+
+On the destination side, DEN and DFW slightly increase delay odds, whereas many others (CLT, LAS, LAX, ORD, PHX, SEA) reduce them relative to the reference destination. This suggests route- and airport-specific congestion patterns.
+
+Calendar:
+
+DAY_OF_WEEK has a small positive coefficient (≈ 0.031, highly significant), so flights later in the week have gradually higher odds of delay (about 3% increase in odds per day).
+
+MONTH has a stronger positive effect (≈ 0.153, highly significant), implying that each later month in the training period raises delay odds by about 17%, reflecting seasonal worsening into spring/summer.
+
+Time-of-day (departure and arrival blocks):
+
+Early-morning departures are the baseline; from mid-morning onward, departure coefficients grow steadily and become large and positive in the afternoon and evening This means flights leaving later in the day have much higher odds of being delayed, consistent with delay propagation.
+
+Arrival blocks show a similar pattern: late-afternoon and evening arrivals have higher delay odds than early-morning arrivals.
+
+Distance:
+
+The distance coefficient is very close to zero and not significant, indicating that once carrier, airports, and time variables are controlled for, flight distance itself does not meaningfully change the probability of a 15+ minute arrival delay in this dataset.
+
+```{r}
+time_grid <- expand.grid(
+  DEP_TIME_BLK  = levels(train_data$DEP_TIME_BLK),
+  ARR_TIME_BLK  = levels(train_data$ARR_TIME_BLK),
+  DAY_OF_WEEK   = median(train_data$DAY_OF_WEEK),
+  DISTANCE      = median(train_data$DISTANCE),
+  MONTH         = median(train_data$MONTH),
+  OP_UNIQUE_CARRIER = levels(train_data$OP_UNIQUE_CARRIER)[1],
+  ORIGIN        = levels(train_data$ORIGIN)[1],
+  DEST          = levels(train_data$DEST)[2]
+)
+
+time_grid$prob_delay <- predict(model, newdata = time_grid, type = "response")
+
+ggplot(time_grid,
+       aes(x = DEP_TIME_BLK, y = ARR_TIME_BLK, fill = prob_delay)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red",
+                      name = "Predicted delay\nprobability") +
+  labs(x = "Departure time block",
+       y = "Arrival time block",
+       title = "Delay probability by departure and arrival time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+dep_grid <- expand.grid(
+  DEP_TIME_BLK = levels(train_data$DEP_TIME_BLK),
+  DAY_OF_WEEK  = median(train_data$DAY_OF_WEEK),
+  DISTANCE     = median(train_data$DISTANCE),
+  MONTH        = median(train_data$MONTH),
+  OP_UNIQUE_CARRIER = levels(train_data$OP_UNIQUE_CARRIER)[1],
+  ORIGIN       = levels(train_data$ORIGIN)[1],
+  DEST         = levels(train_data$DEST)[2],
+  ARR_TIME_BLK = levels(train_data$ARR_TIME_BLK)[1]
+)
+
+dep_grid$prob_delay <- predict(model, newdata = dep_grid, type = "response")
+
+ggplot(dep_grid,
+       aes(x = DEP_TIME_BLK, y = prob_delay, group = 1)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(x = "Departure time block",
+       y = "Predicted delay probability",
+       title = "Effect of departure time on delay risk") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Here is evaluated the logistic regression on July data by computing predicted probabilities, building a ROC curve, and calculating the area under the curve (AUC).
+First, it generates predicted probabilities of ARR_DEL15 = 1 for each flight in test_data;
+then ROC function compares these probabilities to the true labels to construct the ROC object, 
+and AUC function reports the model’s discrimination ability as a single number.
+
+The plotted ROC curve (blue line) bows well above the diagonal reference line, indicating that the model distinguishes delayed from on‑time flights 
+better than random; with an AUC around 0.7, it has moderate predictive power, for ranking flights by delay risk).
+
+```{r}
+# Predicted probabilities on test set
+test_data$pred_prob <- predict(model, newdata = test_data, type = "response")
+
+# ROC object and AUC
+roc_obj <- roc(response = test_data$ARR_DEL15,
+               predictor = test_data$pred_prob)
+auc(roc_obj)        # numeric AUC
+plot(roc_obj, col = "blue", main = "ROC curve - flight delay model")
+```
+
+Is used the PRROC package to evaluate if the model identifies delayed flights when delays are relatively rare, by computing a precision–recall (PR) curve.
+It separates predicted probabilities into scores for delayed flights (fg, foreground) and on‑time flights (bg, background),
+then calls pr.curve() to estimate the PR curve and the area under it (auc.integral), and finally plots precision versus recall across all possible thresholds.
+
+The PR curve shows precision of 0.5–0.6 for moderate recall values, with an overall PR‑AUC of about 0.49, which is better than the baseline of the positive rate but still indicates that, 
+when trying to capture many delayed flights, the model produces a fair number of false alarms; it is useful for ranking flights by risk but not highly precise at high recall.
+
+```{r}
+# Scores for positive (delayed) and negative (on-time) classes
+fg <- test_data$pred_prob[test_data$ARR_DEL15 == 1]  # foreground: positives
+bg <- test_data$pred_prob[test_data$ARR_DEL15 == 0]  # background: negatives
+
+# PR curve and area under PR curve
+pr_obj <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = TRUE)
+pr_obj$auc.integral   
+
+# Plot precision–recall curve
+plot(pr_obj, main = "Precision–Recall curve for flight delay model")
+```
+
+The matrix confusion is plotted and the interpretation is as follow: 
+True negatives (TN): 25,492 flights that were on‑time and predicted on‑time.
+False positives (FP): 1,254 flights that were on‑time but predicted delayed.
+False negatives (FN): 10,843 flights that were delayed but predicted on‑time.
+True positives (TP): 1,755 flights that were delayed and predicted delayed.
+This shows the model misses many delays but rarely raises a false alarm.
+
+```{r}
+# Threshold from ROC analysis 
+threshold <- 0.5
+
+# Convert probabilities to class predictions
+test_data$pred_class <- ifelse(test_data$pred_prob >= threshold, 1, 0)
+
+# Confusion matrix
+cm_table <- table(
+  Actual = test_data$ARR_DEL15,
+  Predicted = test_data$pred_class
+)
+cm_table
+
+# Metrics using caret
+test_data$ARR_DEL15_factor <- factor(test_data$ARR_DEL15, levels = c(0, 1))
+test_data$pred_class_factor <- factor(test_data$pred_class, levels = c(0, 1))
+
+cm <- confusionMatrix(
+  data = test_data$pred_class_factor,
+  reference = test_data$ARR_DEL15_factor,
+  positive = "1"
+)
+cm
+
+# Convert to data frame for ggplot
+cm_df <- as.data.frame(cm_table)
+colnames(cm_df) <- c("Actual", "Predicted", "Freq")
+
+ggplot(cm_df, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 5) +
+  scale_fill_gradient(low = "steelblue", high = "darkred") +
+  labs(title = "Confusion matrix – flight delay model",
+       x = "Predicted class",
+       y = "Actual class") +
+  theme_minimal()
+```
+
+Here we built small “next‑month schedule” and uses the fitted logistic model to forecast delay probabilities, then visualizes those predictions by route and by day of week.
+Is defined 10 hypothetical August flights, covering several major carriers (AA, DL, UA, WN, AS, B6, F9, NK) and routes among the top airports, with specified day of week, distance, and departure/arrival time blocks.
+Plot a bar chart of predicted delay probability for each carrier–origin–destination combination, with bar color indicating whether the model classifies the flight as delayed (1) or on time (0) at the 0.5 threshold.
+Plot a scatter chart of predicted delay probability versus day of week, colored by carrier, to show the risks across the week and between airlines.
+
+```{r}
+next_month_data <- data.frame(
+  OP_UNIQUE_CARRIER = c("AA","DL","UA","WN","AS","B6","F9","NK","AA","DL"),
+  ORIGIN = c("ATL","ATL","ORD","DFW","SEA","LAS","LAX","PHX","DEN","MCO"),
+  DEST   = c("CLT","DEN","ATL","LAS","LAX","ORD","SEA","LAX","PHX","ATL"),
+  DAY_OF_WEEK = c(1,2,3,4,5,6,7,1,3,5),
+  DISTANCE = c(226, 1068, 606, 1055, 954, 1514, 954, 296, 602, 403),  # use real or approximate miles
+  MONTH = rep(8, 10),   # e.g., predicting for August
+  DEP_TIME_BLK = c("0800-0859","1500-1559","1900-1959","1200-1259","1700-1759",
+                   "1000-1059","1400-1459","0600-0659","1600-1659","2000-2059"),
+  ARR_TIME_BLK = c("1000-1059","1700-1759","2100-2159","1400-1459","1900-1959",
+                   "1200-1259","1600-1659","0800-0859","1800-1859","2200-2259"),
+  stringsAsFactors = FALSE
+)
+
+next_month_data$OP_UNIQUE_CARRIER <-
+  factor(next_month_data$OP_UNIQUE_CARRIER,
+         levels = levels(train_data$OP_UNIQUE_CARRIER))
+
+next_month_data <- next_month_data %>%
+  filter(!is.na(OP_UNIQUE_CARRIER))
+
+next_month_data$ORIGIN <-
+  factor(next_month_data$ORIGIN,
+         levels = levels(train_data$ORIGIN))
+
+next_month_data$DEST <-
+  factor(next_month_data$DEST,
+         levels = levels(train_data$DEST))
+
+next_month_data$DEP_TIME_BLK <-
+  factor(next_month_data$DEP_TIME_BLK,
+         levels = levels(train_data$DEP_TIME_BLK))
+
+next_month_data$ARR_TIME_BLK <-
+  factor(next_month_data$ARR_TIME_BLK,
+         levels = levels(train_data$ARR_TIME_BLK))
+```
+
+```{r}
+next_month_data$pred_prob_delay <- predict(
+  model,
+  newdata = next_month_data,
+  type = "response"
+)
+
+threshold <- 0.5
+next_month_data$pred_delayed_flag <-
+  ifelse(next_month_data$pred_prob_delay >= threshold, 1, 0)
+next_month_data
+```
+
+```{r}
+ggplot(next_month_data,
+       aes(x = interaction(OP_UNIQUE_CARRIER, ORIGIN, DEST),
+           y = pred_prob_delay,
+           fill = factor(pred_delayed_flag))) +
+  geom_col() +
+  labs(x = "Carrier-Origin-Dest",
+       y = "Predicted delay probability",
+       fill = "Predicted delayed") +
+  ylim(0, 1) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(next_month_data,
+       aes(x = DAY_OF_WEEK, y = pred_prob_delay,
+           color = OP_UNIQUE_CARRIER)) +
+  geom_point(size = 3) +
+  labs(x = "Day of week",
+       y = "Predicted delay probability") +
+  ylim(0, 1) +
+  theme_minimal()
+```
+
+Conclusion: 
+
+- The model predict moderate risk, with 4 of 10 flights. 
+- The prediction for the next month suggest that airlines as Atlanta, Denmark and Delta presents highest probability to arrive late.
+- During the analysis, we observe that using only 3 predictor the ROC curve present a fair behavior(flat) with ROC value of 0.5. This result indicated that the probability of prediction is too low or moderate low, consequently we added more than 20 predictors and the new ROC increased to 0.7.   
+- An important consideration must be starting from small data and according to the EDA analysis increase the data size.
+
+References:
+
+- https://github.com/wwh9345/Regression-Modeling-US-Airline-On-Time-Performance/blob/main/2006-2007_flight_analysis_prediction.ipynb
+- https://www.kaggle.com/code/luiscrmartins/flight-delay-prediction-using-logistic-regression
